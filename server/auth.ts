@@ -2,6 +2,7 @@ import type { Express, Request, RequestHandler } from "express";
 import session from "express-session";
 import MongoStore from "connect-mongo";
 import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { mongoUrl } from "./mongo";
 import { createUser, findUserByEmail, findUserById, sanitizeUser } from "./users";
@@ -22,29 +23,12 @@ const loginSchema = z.object({
 
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
-// Basic in-memory throttle; replace with a shared store (e.g., Redis) in production multi-instance deployments.
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-
-function consumeLoginAttempt(key: string): boolean {
-  const now = Date.now();
-  const record = loginAttempts.get(key);
-
-  if (record && record.resetAt <= now) {
-    loginAttempts.delete(key);
-  }
-
-  const current = loginAttempts.get(key);
-  if (current && current.count >= LOGIN_MAX_ATTEMPTS) {
-    return false;
-  }
-
-  loginAttempts.set(key, {
-    count: (current?.count ?? 0) + 1,
-    resetAt: current?.resetAt ?? now + LOGIN_WINDOW_MS,
-  });
-
-  return true;
-}
+const loginLimiter = rateLimit({
+  windowMs: LOGIN_WINDOW_MS,
+  limit: LOGIN_MAX_ATTEMPTS,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+});
 
 function hashPassword(password: string, salt?: string) {
   const safeSalt = salt ?? randomBytes(16).toString("hex");
@@ -95,12 +79,7 @@ export const isAuthenticated: RequestHandler = (req, res, next) => {
 export const getSessionUserId = (req: Request) => req.session?.userId;
 
 export function registerAuthRoutes(app: Express): void {
-  app.post("/api/auth/login", async (req, res) => {
-    const clientKey = req.ip || "unknown";
-    if (!consumeLoginAttempt(clientKey)) {
-      return res.status(429).json({ message: "Too many login attempts. Please try again soon." });
-    }
-
+  app.post("/api/auth/login", loginLimiter, async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.errors });
