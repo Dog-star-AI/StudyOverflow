@@ -71,8 +71,8 @@ export function LandingPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || "Unable to sign in");
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message || "Unable to sign in");
       }
 
       window.location.href = "/";

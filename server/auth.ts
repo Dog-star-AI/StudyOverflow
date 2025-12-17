@@ -1,7 +1,7 @@
 import type { Express, Request, RequestHandler } from "express";
 import session from "express-session";
 import MongoStore from "connect-mongo";
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes, randomInt, scryptSync, timingSafeEqual } from "crypto";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { mongoUrl } from "./mongo";
@@ -39,10 +39,10 @@ const verificationCodes = new Map<
 >();
 
 function generateVerificationCode() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
-function hashPassword(password: string, salt?: string) {
+export function hashPassword(password: string, salt?: string) {
   const safeSalt = salt ?? randomBytes(16).toString("hex");
   const hash = scryptSync(password, safeSalt, 64).toString("hex");
   return `${safeSalt}:${hash}`;
@@ -114,7 +114,12 @@ export function registerAuthRoutes(app: Express): void {
       attempts: 0,
     });
 
-    console.log(`Verification code for ${email}: ${code}`);
+    const logMessage = `Verification code requested for ${email}`;
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`${logMessage}: ${code}`);
+    } else {
+      console.log(logMessage);
+    }
 
     return res.json({
       message: "Verification code sent. Check the server logs or your email provider.",

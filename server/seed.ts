@@ -1,6 +1,6 @@
-import { randomBytes, scryptSync } from "crypto";
 import { storage } from "./storage";
 import { createUser } from "./users";
+import { hashPassword } from "./auth";
 
 type UniversitySeed = {
   name: string;
@@ -14,12 +14,6 @@ type CourseSeed = {
   name: string;
   description: string;
 };
-
-function hashPassword(password: string, salt?: string) {
-  const safeSalt = salt ?? randomBytes(16).toString("hex");
-  const hash = scryptSync(password, safeSalt, 64).toString("hex");
-  return `${safeSalt}:${hash}`;
-}
 
 const southAfricanUniversities: UniversitySeed[] = [
   { name: "University of Cape Town", shortName: "UCT", description: "Traditional research university in Cape Town." },

@@ -29,8 +29,17 @@ export async function getNextId(sequenceName: string): Promise<number> {
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: "after" }
   )) as { value?: { seq?: number } };
-  if (!result.value || typeof result.value.seq !== "number") {
-    throw new Error(`Unable to increment counter for ${sequenceName}`);
+  let next = result.value?.seq;
+
+  if (typeof next !== "number") {
+    const fallback = await counters.findOne({ _id: sequenceName });
+    if (fallback?.seq) {
+      next = fallback.seq;
+    } else {
+      await counters.insertOne({ _id: sequenceName, seq: 1 });
+      next = 1;
+    }
   }
-  return result.value.seq;
+
+  return next;
 }
