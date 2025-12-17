@@ -20,7 +20,7 @@ export const universitiesRelations = relations(universities, ({ many }) => ({
   courses: many(courses),
 }));
 
-export const insertUniversitySchema = createInsertSchema(universities).omit({ id: true, memberCount: true });
+export const insertUniversitySchema = createInsertSchema(universities);
 export type InsertUniversity = z.infer<typeof insertUniversitySchema>;
 export type University = typeof universities.$inferSelect;
 
@@ -42,7 +42,7 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
   posts: many(posts),
 }));
 
-export const insertCourseSchema = createInsertSchema(courses).omit({ id: true, memberCount: true });
+export const insertCourseSchema = createInsertSchema(courses);
 export type InsertCourse = z.infer<typeof insertCourseSchema>;
 export type Course = typeof courses.$inferSelect;
 
@@ -68,13 +68,7 @@ export const postsRelations = relations(posts, ({ one, many }) => ({
   votes: many(postVotes),
 }));
 
-export const insertPostSchema = createInsertSchema(posts).omit({ 
-  id: true, 
-  voteCount: true, 
-  commentCount: true, 
-  isAnswered: true, 
-  createdAt: true 
-});
+export const insertPostSchema = createInsertSchema(posts);
 export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;
 
@@ -104,12 +98,7 @@ export const commentsRelations = relations(comments, ({ one, many }) => ({
   votes: many(commentVotes),
 }));
 
-export const insertCommentSchema = createInsertSchema(comments).omit({ 
-  id: true, 
-  voteCount: true, 
-  isAcceptedAnswer: true, 
-  createdAt: true 
-});
+export const insertCommentSchema = createInsertSchema(comments);
 export type InsertComment = z.infer<typeof insertCommentSchema>;
 export type Comment = typeof comments.$inferSelect;
 
