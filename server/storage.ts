@@ -1,335 +1,353 @@
-import { 
-  universities, courses, posts, comments, postVotes, commentVotes,
-  type University, type InsertUniversity,
-  type Course, type InsertCourse,
-  type Post, type InsertPost, type PostWithAuthor,
-  type Comment, type InsertComment, type CommentWithAuthor,
-  type InsertPostVote, type InsertCommentVote,
-  users
+import type {
+  Comment,
+  CommentWithAuthor,
+  Course,
+  InsertComment,
+  InsertCourse,
+  InsertPost,
+  InsertUniversity,
+  Post,
+  PostWithAuthor,
+  University,
+  User,
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import type { Sort } from "mongodb";
+import { getCollection, getNextId } from "./mongo";
+import { findUsersByIds } from "./users";
+
+type UniversityDocument = Omit<University, "id"> & { _id: number };
+type CourseDocument = Omit<Course, "id"> & { _id: number };
+type PostDocument = Omit<Post, "id"> & { _id: number };
+type CommentDocument = Omit<Comment, "id"> & { _id: number };
+type PostVoteDocument = { postId: number; userId: string; value: number };
+type CommentVoteDocument = { commentId: number; userId: string; value: number };
+
+function toAuthorProfile(user: User | undefined, fallbackId: string) {
+  if (!user) {
+    return { id: fallbackId, firstName: null, lastName: null, profileImageUrl: null };
+  }
+  return {
+    id: user.id,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    profileImageUrl: user.profileImageUrl,
+  };
+}
 
 export interface IStorage {
-  // Universities
   getUniversities(): Promise<University[]>;
   getUniversity(id: number): Promise<University | undefined>;
   createUniversity(data: InsertUniversity): Promise<University>;
 
-  // Courses
   getCourses(universityId?: number): Promise<Course[]>;
   getCourse(id: number): Promise<(Course & { university: University }) | undefined>;
   createCourse(data: InsertCourse): Promise<Course>;
 
-  // Posts
   getPosts(options: { courseId?: number; universityId?: number; sort?: string; userId?: string }): Promise<PostWithAuthor[]>;
   getPost(id: number, userId?: string): Promise<PostWithAuthor | undefined>;
   createPost(data: InsertPost): Promise<Post>;
   voteOnPost(postId: number, userId: string, value: number): Promise<void>;
 
-  // Comments
   getComments(postId: number, userId?: string): Promise<CommentWithAuthor[]>;
+  getComment(id: number): Promise<Comment | undefined>;
   createComment(data: InsertComment): Promise<Comment>;
   voteOnComment(commentId: number, userId: string, value: number): Promise<void>;
   acceptAnswer(commentId: number, postId: number): Promise<void>;
 }
 
+async function mapCourses(ids: number[]): Promise<Map<number, Course>> {
+  if (ids.length === 0) return new Map();
+  const coursesCol = await getCollection<CourseDocument>("courses");
+  const docs = await coursesCol.find({ _id: { $in: ids } }).toArray();
+  return new Map(
+    docs.map((c) => [
+      c._id,
+      {
+        id: c._id,
+        universityId: c.universityId,
+        code: c.code,
+        name: c.name,
+        description: c.description ?? null,
+        memberCount: c.memberCount ?? 0,
+      },
+    ])
+  );
+}
+
 export class DatabaseStorage implements IStorage {
-  // Universities
   async getUniversities(): Promise<University[]> {
-    return db.select().from(universities);
+    const universities = await getCollection<UniversityDocument>("universities");
+    const docs = await universities.find({}).toArray();
+    return docs.map((u) => ({
+      id: u._id,
+      name: u.name,
+      shortName: u.shortName,
+      description: u.description ?? null,
+      logoUrl: u.logoUrl ?? null,
+      memberCount: u.memberCount ?? 0,
+    }));
   }
 
   async getUniversity(id: number): Promise<University | undefined> {
-    const [university] = await db.select().from(universities).where(eq(universities.id, id));
-    return university;
+    const universities = await getCollection<UniversityDocument>("universities");
+    const doc = await universities.findOne({ _id: id });
+    if (!doc) return undefined;
+    return {
+      id: doc._id,
+      name: doc.name,
+      shortName: doc.shortName,
+      description: doc.description ?? null,
+      logoUrl: doc.logoUrl ?? null,
+      memberCount: doc.memberCount ?? 0,
+    };
   }
 
   async createUniversity(data: InsertUniversity): Promise<University> {
-    const [university] = await db.insert(universities).values(data).returning();
-    return university;
+    const universities = await getCollection<UniversityDocument>("universities");
+    const id = await getNextId("universities");
+    const doc: UniversityDocument = {
+      _id: id,
+      name: data.name,
+      shortName: data.shortName,
+      description: data.description ?? null,
+      logoUrl: data.logoUrl ?? null,
+      memberCount: 0,
+    };
+    await universities.insertOne(doc);
+    return {
+      id,
+      name: doc.name,
+      shortName: doc.shortName,
+      description: doc.description,
+      logoUrl: doc.logoUrl,
+      memberCount: doc.memberCount,
+    };
   }
 
-  // Courses
   async getCourses(universityId?: number): Promise<Course[]> {
-    if (universityId) {
-      return db.select().from(courses).where(eq(courses.universityId, universityId));
-    }
-    return db.select().from(courses);
+    const courses = await getCollection<CourseDocument>("courses");
+    const filter = universityId ? { universityId } : {};
+    const docs = await courses.find(filter).toArray();
+    return docs.map((c) => ({
+      id: c._id,
+      universityId: c.universityId,
+      code: c.code,
+      name: c.name,
+      description: c.description ?? null,
+      memberCount: c.memberCount ?? 0,
+    }));
   }
 
   async getCourse(id: number): Promise<(Course & { university: University }) | undefined> {
-    const result = await db
-      .select({
-        id: courses.id,
-        universityId: courses.universityId,
-        code: courses.code,
-        name: courses.name,
-        description: courses.description,
-        memberCount: courses.memberCount,
-        university: universities,
-      })
-      .from(courses)
-      .leftJoin(universities, eq(courses.universityId, universities.id))
-      .where(eq(courses.id, id));
-    
-    if (result.length === 0 || !result[0].university) return undefined;
-    
+    const courses = await getCollection<CourseDocument>("courses");
+    const course = await courses.findOne({ _id: id });
+    if (!course) return undefined;
+    const university = await this.getUniversity(course.universityId);
+    if (!university) return undefined;
     return {
-      ...result[0],
-      university: result[0].university,
+      id: course._id,
+      universityId: course.universityId,
+      code: course.code,
+      name: course.name,
+      description: course.description ?? null,
+      memberCount: course.memberCount ?? 0,
+      university,
     };
   }
 
   async createCourse(data: InsertCourse): Promise<Course> {
-    const [course] = await db.insert(courses).values(data).returning();
-    return course;
+    const courses = await getCollection<CourseDocument>("courses");
+    const id = await getNextId("courses");
+    const doc: CourseDocument = {
+      _id: id,
+      universityId: data.universityId,
+      code: data.code,
+      name: data.name,
+      description: data.description ?? null,
+      memberCount: 0,
+    };
+    await courses.insertOne(doc);
+    return {
+      id,
+      universityId: doc.universityId,
+      code: doc.code,
+      name: doc.name,
+      description: doc.description,
+      memberCount: doc.memberCount,
+    };
   }
 
-  // Posts
   async getPosts(options: { courseId?: number; universityId?: number; sort?: string; userId?: string }): Promise<PostWithAuthor[]> {
     const { courseId, universityId, sort = "hot", userId } = options;
+    const postsCol = await getCollection<PostDocument>("posts");
+    const filter: Record<string, any> = {};
 
-    let query = db
-      .select({
-        id: posts.id,
-        courseId: posts.courseId,
-        authorId: posts.authorId,
-        title: posts.title,
-        content: posts.content,
-        voteCount: posts.voteCount,
-        commentCount: posts.commentCount,
-        isAnswered: posts.isAnswered,
-        createdAt: posts.createdAt,
-        author: {
-          id: users.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-          profileImageUrl: users.profileImageUrl,
-        },
-        course: {
-          id: courses.id,
-          code: courses.code,
-          name: courses.name,
-          universityId: courses.universityId,
-        },
-      })
-      .from(posts)
-      .leftJoin(users, eq(posts.authorId, users.id))
-      .leftJoin(courses, eq(posts.courseId, courses.id));
-
-    const conditions = [];
     if (courseId) {
-      conditions.push(eq(posts.courseId, courseId));
+      filter.courseId = courseId;
     }
+
     if (universityId) {
-      conditions.push(eq(courses.universityId, universityId));
+      const courses = await getCollection<CourseDocument>("courses");
+      const courseIds = await courses
+        .find({ universityId }, { projection: { _id: 1 } })
+        .map((c) => c._id)
+        .toArray();
+      filter.courseId = filter.courseId
+        ? filter.courseId
+        : { $in: courseIds };
     }
 
-    let results;
-    if (conditions.length > 0) {
-      results = await query.where(and(...conditions)).orderBy(
-        sort === "new" ? desc(posts.createdAt) :
-        sort === "top" ? desc(posts.voteCount) :
-        desc(posts.voteCount) // hot is also by votes for simplicity
-      );
-    } else {
-      results = await query.orderBy(
-        sort === "new" ? desc(posts.createdAt) :
-        sort === "top" ? desc(posts.voteCount) :
-        desc(posts.voteCount)
-      );
+    const order: Sort = sort === "new" ? { createdAt: -1 } : { voteCount: -1 };
+    const postDocs = await postsCol.find(filter).sort(order).toArray();
+
+    const courseMap = await mapCourses(Array.from(new Set(postDocs.map((p) => p.courseId))));
+    const authorMap = await findUsersByIds(Array.from(new Set(postDocs.map((p) => p.authorId))));
+
+    const userVotes = new Map<number, number>();
+    if (userId && postDocs.length > 0) {
+      const postVotes = await getCollection<PostVoteDocument>("postVotes");
+      const votes = await postVotes
+        .find({ userId, postId: { $in: postDocs.map((p) => p._id) } })
+        .toArray();
+      votes.forEach((v) => userVotes.set(v.postId, v.value));
     }
 
-    // Get user votes if userId provided
-    let userVotes: Map<number, number> = new Map();
-    if (userId && results.length > 0) {
-      const postIds = results.map(r => r.id);
-      const votes = await db
-        .select()
-        .from(postVotes)
-        .where(and(
-          eq(postVotes.userId, userId),
-          sql`${postVotes.postId} = ANY(${postIds})`
-        ));
-      votes.forEach(v => userVotes.set(v.postId, v.value));
-    }
-
-    return results.map(r => ({
-      id: r.id,
-      courseId: r.courseId,
-      authorId: r.authorId,
-      title: r.title,
-      content: r.content,
-      voteCount: r.voteCount,
-      commentCount: r.commentCount,
-      isAnswered: r.isAnswered,
-      createdAt: r.createdAt,
-      author: r.author || { id: r.authorId, firstName: null, lastName: null, profileImageUrl: null },
-      course: r.course || { id: r.courseId, code: "Unknown", name: "Unknown", universityId: 0 },
-      userVote: userVotes.get(r.id),
+    return postDocs.map((p) => ({
+      id: p._id,
+      courseId: p.courseId,
+      authorId: p.authorId,
+      title: p.title,
+      content: p.content,
+      voteCount: p.voteCount ?? 0,
+      commentCount: p.commentCount ?? 0,
+      isAnswered: p.isAnswered ?? false,
+      createdAt: new Date(p.createdAt),
+      author: toAuthorProfile(authorMap.get(p.authorId), p.authorId),
+      course: courseMap.get(p.courseId) ?? { id: p.courseId, code: "Unknown", name: "Unknown", universityId: 0, memberCount: 0 },
+      userVote: userVotes.get(p._id),
     }));
   }
 
   async getPost(id: number, userId?: string): Promise<PostWithAuthor | undefined> {
-    const result = await db
-      .select({
-        id: posts.id,
-        courseId: posts.courseId,
-        authorId: posts.authorId,
-        title: posts.title,
-        content: posts.content,
-        voteCount: posts.voteCount,
-        commentCount: posts.commentCount,
-        isAnswered: posts.isAnswered,
-        createdAt: posts.createdAt,
-        author: {
-          id: users.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-          profileImageUrl: users.profileImageUrl,
-        },
-        course: {
-          id: courses.id,
-          code: courses.code,
-          name: courses.name,
-          universityId: courses.universityId,
-        },
-      })
-      .from(posts)
-      .leftJoin(users, eq(posts.authorId, users.id))
-      .leftJoin(courses, eq(posts.courseId, courses.id))
-      .where(eq(posts.id, id));
+    const posts = await getCollection<PostDocument>("posts");
+    const post = await posts.findOne({ _id: id });
+    if (!post) return undefined;
 
-    if (result.length === 0) return undefined;
+    const [course, author] = await Promise.all([
+      mapCourses([post.courseId]),
+      findUsersByIds([post.authorId]),
+    ]);
 
-    const r = result[0];
     let userVote: number | undefined;
-    
     if (userId) {
-      const [vote] = await db
-        .select()
-        .from(postVotes)
-        .where(and(eq(postVotes.postId, id), eq(postVotes.userId, userId)));
+      const postVotes = await getCollection<PostVoteDocument>("postVotes");
+      const vote = await postVotes.findOne({ postId: id, userId });
       userVote = vote?.value;
     }
 
     return {
-      id: r.id,
-      courseId: r.courseId,
-      authorId: r.authorId,
-      title: r.title,
-      content: r.content,
-      voteCount: r.voteCount,
-      commentCount: r.commentCount,
-      isAnswered: r.isAnswered,
-      createdAt: r.createdAt,
-      author: r.author || { id: r.authorId, firstName: null, lastName: null, profileImageUrl: null },
-      course: r.course || { id: r.courseId, code: "Unknown", name: "Unknown", universityId: 0 },
+      id: post._id,
+      courseId: post.courseId,
+      authorId: post.authorId,
+      title: post.title,
+      content: post.content,
+      voteCount: post.voteCount ?? 0,
+      commentCount: post.commentCount ?? 0,
+      isAnswered: post.isAnswered ?? false,
+      createdAt: new Date(post.createdAt),
+      author: toAuthorProfile(author.get(post.authorId), post.authorId),
+      course: course.get(post.courseId) ?? { id: post.courseId, code: "Unknown", name: "Unknown", universityId: 0, memberCount: 0 },
       userVote,
     };
   }
 
   async createPost(data: InsertPost): Promise<Post> {
-    const [post] = await db.insert(posts).values(data).returning();
-    return post;
+    const posts = await getCollection<PostDocument>("posts");
+    const id = await getNextId("posts");
+    const now = new Date();
+    const doc: PostDocument = {
+      _id: id,
+      courseId: data.courseId,
+      authorId: data.authorId,
+      title: data.title,
+      content: data.content,
+      voteCount: 0,
+      commentCount: 0,
+      isAnswered: false,
+      createdAt: now,
+    };
+    await posts.insertOne(doc);
+    return {
+      id,
+      courseId: doc.courseId,
+      authorId: doc.authorId,
+      title: doc.title,
+      content: doc.content,
+      voteCount: doc.voteCount,
+      commentCount: doc.commentCount,
+      isAnswered: doc.isAnswered,
+      createdAt: doc.createdAt,
+    };
   }
 
   async voteOnPost(postId: number, userId: string, value: number): Promise<void> {
-    // Check existing vote
-    const [existingVote] = await db
-      .select()
-      .from(postVotes)
-      .where(and(eq(postVotes.postId, postId), eq(postVotes.userId, userId)));
+    const postVotes = await getCollection<PostVoteDocument>("postVotes");
+    const posts = await getCollection<PostDocument>("posts");
+    const existing = await postVotes.findOne({ postId, userId });
 
-    if (existingVote) {
-      if (existingVote.value === value) {
-        // Remove vote (toggle off)
-        await db.delete(postVotes).where(
-          and(eq(postVotes.postId, postId), eq(postVotes.userId, userId))
-        );
-        await db.update(posts)
-          .set({ voteCount: sql`${posts.voteCount} - ${value}` })
-          .where(eq(posts.id, postId));
+    if (existing) {
+      if (existing.value === value) {
+        await postVotes.deleteOne({ postId, userId });
+        await posts.updateOne({ _id: postId }, { $inc: { voteCount: -value } });
       } else {
-        // Change vote
-        await db.update(postVotes)
-          .set({ value })
-          .where(and(eq(postVotes.postId, postId), eq(postVotes.userId, userId)));
-        await db.update(posts)
-          .set({ voteCount: sql`${posts.voteCount} + ${value * 2}` })
-          .where(eq(posts.id, postId));
+        await postVotes.updateOne({ postId, userId }, { $set: { value } });
+        await posts.updateOne({ _id: postId }, { $inc: { voteCount: value * 2 } });
       }
     } else {
-      // New vote
-      await db.insert(postVotes).values({ postId, userId, value });
-      await db.update(posts)
-        .set({ voteCount: sql`${posts.voteCount} + ${value}` })
-        .where(eq(posts.id, postId));
+      await postVotes.insertOne({ postId, userId, value });
+      await posts.updateOne({ _id: postId }, { $inc: { voteCount: value } });
     }
   }
 
-  // Comments
   async getComments(postId: number, userId?: string): Promise<CommentWithAuthor[]> {
-    const allComments = await db
-      .select({
-        id: comments.id,
-        postId: comments.postId,
-        parentId: comments.parentId,
-        authorId: comments.authorId,
-        content: comments.content,
-        voteCount: comments.voteCount,
-        isAcceptedAnswer: comments.isAcceptedAnswer,
-        createdAt: comments.createdAt,
-        author: {
-          id: users.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-          profileImageUrl: users.profileImageUrl,
-        },
-      })
-      .from(comments)
-      .leftJoin(users, eq(comments.authorId, users.id))
-      .where(eq(comments.postId, postId))
-      .orderBy(desc(comments.isAcceptedAnswer), desc(comments.voteCount));
+    const commentsCol = await getCollection<CommentDocument>("comments");
+    const allComments = await commentsCol
+      .find({ postId })
+      .sort({ isAcceptedAnswer: -1, voteCount: -1, createdAt: -1 })
+      .toArray();
 
-    // Get user votes
-    let userVotes: Map<number, number> = new Map();
+    const authorMap = await findUsersByIds(Array.from(new Set(allComments.map((c) => c.authorId))));
+    const userVotes = new Map<number, number>();
     if (userId && allComments.length > 0) {
-      const commentIds = allComments.map(c => c.id);
-      const votes = await db
-        .select()
-        .from(commentVotes)
-        .where(and(
-          eq(commentVotes.userId, userId),
-          sql`${commentVotes.commentId} = ANY(${commentIds})`
-        ));
-      votes.forEach(v => userVotes.set(v.commentId, v.value));
+      const votesCol = await getCollection<CommentVoteDocument>("commentVotes");
+      const votes = await votesCol
+        .find({ userId, commentId: { $in: allComments.map((c) => c._id) } })
+        .toArray();
+      votes.forEach((v) => userVotes.set(v.commentId, v.value));
     }
 
-    // Build nested structure
     const commentMap = new Map<number, CommentWithAuthor>();
     const rootComments: CommentWithAuthor[] = [];
 
-    allComments.forEach(c => {
+    allComments.forEach((c) => {
       const comment: CommentWithAuthor = {
-        id: c.id,
+        id: c._id,
         postId: c.postId,
-        parentId: c.parentId,
+        parentId: c.parentId ?? null,
         authorId: c.authorId,
         content: c.content,
-        voteCount: c.voteCount,
-        isAcceptedAnswer: c.isAcceptedAnswer,
-        createdAt: c.createdAt,
-        author: c.author || { id: c.authorId, firstName: null, lastName: null, profileImageUrl: null },
-        userVote: userVotes.get(c.id),
+        voteCount: c.voteCount ?? 0,
+        isAcceptedAnswer: c.isAcceptedAnswer ?? false,
+        createdAt: new Date(c.createdAt),
+        author: toAuthorProfile(authorMap.get(c.authorId), c.authorId),
+        userVote: userVotes.get(c._id),
         replies: [],
       };
-      commentMap.set(c.id, comment);
+      commentMap.set(c._id, comment);
     });
 
     commentMap.forEach((comment) => {
-      if (comment.parentId) {
+      if (comment.parentId !== null && comment.parentId !== undefined) {
         const parent = commentMap.get(comment.parentId);
         if (parent) {
           parent.replies = parent.replies || [];
@@ -345,62 +363,77 @@ export class DatabaseStorage implements IStorage {
     return rootComments;
   }
 
+  async getComment(id: number): Promise<Comment | undefined> {
+    const comments = await getCollection<CommentDocument>("comments");
+    const comment = await comments.findOne({ _id: id });
+    if (!comment) return undefined;
+    return {
+      id: comment._id,
+      postId: comment.postId,
+      parentId: comment.parentId ?? null,
+      authorId: comment.authorId,
+      content: comment.content,
+      voteCount: comment.voteCount ?? 0,
+      isAcceptedAnswer: comment.isAcceptedAnswer ?? false,
+      createdAt: new Date(comment.createdAt),
+    };
+  }
+
   async createComment(data: InsertComment): Promise<Comment> {
-    const [comment] = await db.insert(comments).values(data).returning();
-    
-    // Update post comment count
-    await db.update(posts)
-      .set({ commentCount: sql`${posts.commentCount} + 1` })
-      .where(eq(posts.id, data.postId));
-    
-    return comment;
+    const comments = await getCollection<CommentDocument>("comments");
+    const posts = await getCollection<PostDocument>("posts");
+    const id = await getNextId("comments");
+    const now = new Date();
+    const doc: CommentDocument = {
+      _id: id,
+      postId: data.postId,
+      parentId: data.parentId ?? null,
+      authorId: data.authorId,
+      content: data.content,
+      voteCount: 0,
+      isAcceptedAnswer: false,
+      createdAt: now,
+    };
+    await comments.insertOne(doc);
+    await posts.updateOne({ _id: data.postId }, { $inc: { commentCount: 1 } });
+    return {
+      id,
+      postId: doc.postId,
+      parentId: doc.parentId,
+      authorId: doc.authorId,
+      content: doc.content,
+      voteCount: doc.voteCount,
+      isAcceptedAnswer: doc.isAcceptedAnswer,
+      createdAt: doc.createdAt,
+    };
   }
 
   async voteOnComment(commentId: number, userId: string, value: number): Promise<void> {
-    const [existingVote] = await db
-      .select()
-      .from(commentVotes)
-      .where(and(eq(commentVotes.commentId, commentId), eq(commentVotes.userId, userId)));
+    const commentVotes = await getCollection<CommentVoteDocument>("commentVotes");
+    const comments = await getCollection<CommentDocument>("comments");
+    const existing = await commentVotes.findOne({ commentId, userId });
 
-    if (existingVote) {
-      if (existingVote.value === value) {
-        await db.delete(commentVotes).where(
-          and(eq(commentVotes.commentId, commentId), eq(commentVotes.userId, userId))
-        );
-        await db.update(comments)
-          .set({ voteCount: sql`${comments.voteCount} - ${value}` })
-          .where(eq(comments.id, commentId));
+    if (existing) {
+      if (existing.value === value) {
+        await commentVotes.deleteOne({ commentId, userId });
+        await comments.updateOne({ _id: commentId }, { $inc: { voteCount: -value } });
       } else {
-        await db.update(commentVotes)
-          .set({ value })
-          .where(and(eq(commentVotes.commentId, commentId), eq(commentVotes.userId, userId)));
-        await db.update(comments)
-          .set({ voteCount: sql`${comments.voteCount} + ${value * 2}` })
-          .where(eq(comments.id, commentId));
+        await commentVotes.updateOne({ commentId, userId }, { $set: { value } });
+        await comments.updateOne({ _id: commentId }, { $inc: { voteCount: value * 2 } });
       }
     } else {
-      await db.insert(commentVotes).values({ commentId, userId, value });
-      await db.update(comments)
-        .set({ voteCount: sql`${comments.voteCount} + ${value}` })
-        .where(eq(comments.id, commentId));
+      await commentVotes.insertOne({ commentId, userId, value });
+      await comments.updateOne({ _id: commentId }, { $inc: { voteCount: value } });
     }
   }
 
   async acceptAnswer(commentId: number, postId: number): Promise<void> {
-    // Unmark any existing accepted answer
-    await db.update(comments)
-      .set({ isAcceptedAnswer: false })
-      .where(eq(comments.postId, postId));
-    
-    // Mark this comment as accepted
-    await db.update(comments)
-      .set({ isAcceptedAnswer: true })
-      .where(eq(comments.id, commentId));
-    
-    // Mark post as answered
-    await db.update(posts)
-      .set({ isAnswered: true })
-      .where(eq(posts.id, postId));
+    const comments = await getCollection<CommentDocument>("comments");
+    const posts = await getCollection<PostDocument>("posts");
+
+    await comments.updateMany({ postId }, { $set: { isAcceptedAnswer: false } });
+    await comments.updateOne({ _id: commentId }, { $set: { isAcceptedAnswer: true } });
+    await posts.updateOne({ _id: postId }, { $set: { isAnswered: true } });
   }
 }
 
