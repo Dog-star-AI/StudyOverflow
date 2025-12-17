@@ -1,4 +1,4 @@
-import express, { type Request, Response, NextFunction } from "express";
+import express, { type Request, Response, NextFunction, type RequestHandler } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -107,10 +107,9 @@ async function startServer() {
 
 startServer();
 
+const expressHandler: RequestHandler = app;
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   await setupPromise;
-  const requestListener =
-    app as unknown as (req: IncomingMessage, res: ServerResponse) => void;
-
-  return requestListener(req, res);
+  return expressHandler(req as any, res as any, () => undefined);
 }
