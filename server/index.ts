@@ -1,10 +1,11 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
-import { createServer } from "http";
+import { createServer, type IncomingMessage, type ServerResponse, type RequestListener } from "http";
 
 const app = express();
 const httpServer = createServer(app);
+const isVercel = !!process.env.VERCEL;
 
 declare module "http" {
   interface IncomingMessage {
@@ -59,7 +60,7 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
+const setupPromise = (async () => {
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -70,15 +71,22 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
+  // only setup static assets in production when we control the filesystem
+  if (process.env.NODE_ENV === "production" && !isVercel) {
     serveStatic(app);
-  } else {
+  } else if (!isVercel) {
+    // importantly only setup vite in development and after
+    // setting up all the other routes so the catch-all route
+    // doesn't interfere with the other routes
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
+})();
+
+async function startServer() {
+  await setupPromise;
+
+  if (isVercel) return;
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
@@ -95,4 +103,20 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
-})();
+}
+
+startServer();
+
+const vercelRequestListener: RequestListener = (req, res) => {
+  app(req as unknown as Request, res as unknown as Response, (err?: unknown) => {
+    if (err) {
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+    }
+  });
+};
+
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  await setupPromise;
+  return vercelRequestListener(req, res);
+}

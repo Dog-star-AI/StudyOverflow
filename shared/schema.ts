@@ -1,6 +1,5 @@
 import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, timestamp, boolean, primaryKey } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Re-export auth models
@@ -20,8 +19,13 @@ export const universitiesRelations = relations(universities, ({ many }) => ({
   courses: many(courses),
 }));
 
-export const insertUniversitySchema = createInsertSchema(universities).omit({ id: true, memberCount: true });
-export type InsertUniversity = z.infer<typeof insertUniversitySchema>;
+export type InsertUniversity = Omit<typeof universities.$inferInsert, "id" | "memberCount">;
+export const insertUniversitySchema: z.ZodType<InsertUniversity> = z.object({
+  name: z.string(),
+  shortName: z.string(),
+  description: z.string().nullish(),
+  logoUrl: z.string().nullish(),
+});
 export type University = typeof universities.$inferSelect;
 
 // Courses table
@@ -42,8 +46,13 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
   posts: many(posts),
 }));
 
-export const insertCourseSchema = createInsertSchema(courses).omit({ id: true, memberCount: true });
-export type InsertCourse = z.infer<typeof insertCourseSchema>;
+export type InsertCourse = Omit<typeof courses.$inferInsert, "id" | "memberCount">;
+export const insertCourseSchema: z.ZodType<InsertCourse> = z.object({
+  universityId: z.number(),
+  code: z.string(),
+  name: z.string(),
+  description: z.string().nullish(),
+});
 export type Course = typeof courses.$inferSelect;
 
 // Posts table
@@ -68,14 +77,16 @@ export const postsRelations = relations(posts, ({ one, many }) => ({
   votes: many(postVotes),
 }));
 
-export const insertPostSchema = createInsertSchema(posts).omit({ 
-  id: true, 
-  voteCount: true, 
-  commentCount: true, 
-  isAnswered: true, 
-  createdAt: true 
+export type InsertPost = Omit<
+  typeof posts.$inferInsert,
+  "id" | "voteCount" | "commentCount" | "isAnswered" | "createdAt"
+>;
+export const insertPostSchema: z.ZodType<InsertPost> = z.object({
+  courseId: z.number(),
+  authorId: z.string(),
+  title: z.string(),
+  content: z.string(),
 });
-export type InsertPost = z.infer<typeof insertPostSchema>;
 export type Post = typeof posts.$inferSelect;
 
 // Comments table
@@ -104,13 +115,16 @@ export const commentsRelations = relations(comments, ({ one, many }) => ({
   votes: many(commentVotes),
 }));
 
-export const insertCommentSchema = createInsertSchema(comments).omit({ 
-  id: true, 
-  voteCount: true, 
-  isAcceptedAnswer: true, 
-  createdAt: true 
+export type InsertComment = Omit<
+  typeof comments.$inferInsert,
+  "id" | "voteCount" | "isAcceptedAnswer" | "createdAt"
+>;
+export const insertCommentSchema: z.ZodType<InsertComment> = z.object({
+  postId: z.number(),
+  parentId: z.number().optional(),
+  authorId: z.string(),
+  content: z.string(),
 });
-export type InsertComment = z.infer<typeof insertCommentSchema>;
 export type Comment = typeof comments.$inferSelect;
 
 // Post votes table
@@ -129,8 +143,12 @@ export const postVotesRelations = relations(postVotes, ({ one }) => ({
   }),
 }));
 
-export const insertPostVoteSchema = createInsertSchema(postVotes);
-export type InsertPostVote = z.infer<typeof insertPostVoteSchema>;
+export type InsertPostVote = typeof postVotes.$inferInsert;
+export const insertPostVoteSchema: z.ZodType<InsertPostVote> = z.object({
+  postId: z.number(),
+  userId: z.string(),
+  value: z.union([z.literal(1), z.literal(-1)]),
+});
 export type PostVote = typeof postVotes.$inferSelect;
 
 // Comment votes table
@@ -149,8 +167,12 @@ export const commentVotesRelations = relations(commentVotes, ({ one }) => ({
   }),
 }));
 
-export const insertCommentVoteSchema = createInsertSchema(commentVotes);
-export type InsertCommentVote = z.infer<typeof insertCommentVoteSchema>;
+export type InsertCommentVote = typeof commentVotes.$inferInsert;
+export const insertCommentVoteSchema: z.ZodType<InsertCommentVote> = z.object({
+  commentId: z.number(),
+  userId: z.string(),
+  value: z.union([z.literal(1), z.literal(-1)]),
+});
 export type CommentVote = typeof commentVotes.$inferSelect;
 
 // Extended types for frontend with user info
