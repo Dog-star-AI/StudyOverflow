@@ -1,8 +1,49 @@
+import { useState, type FormEvent } from "react";
 import { GraduationCap, MessageSquare, Users, CheckCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function LandingPage() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+          firstName: firstName.trim() || undefined,
+          lastName: lastName.trim() || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Unable to sign in");
+      }
+
+      window.location.href = "/";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to sign in");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b">
@@ -14,7 +55,7 @@ export function LandingPage() {
             <span className="font-bold text-lg">StudyOverflow</span>
           </div>
           <Button asChild data-testid="button-login-header">
-            <a href="/api/login">Sign In</a>
+            <a href="#login">Sign In</a>
           </Button>
         </div>
       </header>
@@ -30,11 +71,73 @@ export function LandingPage() {
               Ask questions, share solutions, and learn together.
             </p>
             <Button size="lg" asChild data-testid="button-get-started">
-              <a href="/api/login">
+              <a href="#login">
                 Get Started
                 <ArrowRight className="h-5 w-5" />
               </a>
             </Button>
+          </div>
+          <div id="login" className="max-w-xl mx-auto mt-12">
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="space-y-1 text-left">
+                  <h2 className="text-xl font-semibold">Sign in or create an account</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Use your email and a password to join securely. Your details are stored on the server and kept private to your account.
+                  </p>
+                </div>
+                <form className="space-y-4 text-left" onSubmit={handleSubmit}>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">First name (optional)</Label>
+                      <Input
+                        id="firstName"
+                        autoComplete="given-name"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Last name (optional)</Label>
+                      <Input
+                        id="lastName"
+                        autoComplete="family-name"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      minLength={8}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                  {error && <p className="text-sm text-destructive">{error}</p>}
+                  <Button type="submit" className="w-full" disabled={submitting} data-testid="button-join-now">
+                    {submitting ? "Signing in..." : "Join Now - It's Free"}
+                    <ArrowRight className="h-5 w-5 ml-2" />
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           </div>
         </section>
 
@@ -87,9 +190,9 @@ export function LandingPage() {
             <p className="text-muted-foreground mb-8">
               Join thousands of students already helping each other succeed.
             </p>
-            <Button size="lg" asChild data-testid="button-join-now">
-              <a href="/api/login">
-                Join Now - It's Free
+            <Button size="lg" asChild>
+              <a href="#login">
+                Start Learning Together
                 <ArrowRight className="h-5 w-5" />
               </a>
             </Button>

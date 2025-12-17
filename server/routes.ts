@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
+import type { Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, getSessionUserId } from "./auth";
 import { insertPostSchema, insertCommentSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -70,7 +70,7 @@ export async function registerRoutes(
       const courseId = req.query.courseId ? parseInt(req.query.courseId as string, 10) : undefined;
       const universityId = req.query.universityId ? parseInt(req.query.universityId as string, 10) : undefined;
       const sort = (req.query.sort as string) || "hot";
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getSessionUserId(req);
       
       const posts = await storage.getPosts({ courseId, universityId, sort, userId });
       res.json(posts);
@@ -83,7 +83,7 @@ export async function registerRoutes(
   app.get("/api/posts/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getSessionUserId(req);
       const post = await storage.getPost(id, userId);
       if (!post) {
         return res.status(404).json({ message: "Post not found" });
@@ -97,7 +97,7 @@ export async function registerRoutes(
 
   app.post("/api/posts", isAuthenticated, async (req, res) => {
     try {
-      const userId = (req.user as any).claims.sub;
+      const userId = req.session!.userId!;
       const schema = z.object({
         title: z.string().min(5).max(200),
         content: z.string().min(20).max(10000),
@@ -122,7 +122,7 @@ export async function registerRoutes(
   app.post("/api/posts/:id/vote", isAuthenticated, async (req, res) => {
     try {
       const postId = parseInt(req.params.id, 10);
-      const userId = (req.user as any).claims.sub;
+      const userId = req.session!.userId!;
       const { value } = z.object({ value: z.number().min(-1).max(1) }).parse(req.body);
       
       if (value !== 1 && value !== -1) {
@@ -141,7 +141,7 @@ export async function registerRoutes(
   app.get("/api/posts/:id/comments", async (req, res) => {
     try {
       const postId = parseInt(req.params.id, 10);
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = getSessionUserId(req);
       const comments = await storage.getComments(postId, userId);
       res.json(comments);
     } catch (error) {
@@ -153,7 +153,7 @@ export async function registerRoutes(
   app.post("/api/posts/:id/comments", isAuthenticated, async (req, res) => {
     try {
       const postId = parseInt(req.params.id, 10);
-      const userId = (req.user as any).claims.sub;
+      const userId = req.session!.userId!;
       const schema = z.object({
         content: z.string().min(1).max(10000),
         parentId: z.number().optional(),
@@ -179,7 +179,7 @@ export async function registerRoutes(
   app.post("/api/comments/:id/vote", isAuthenticated, async (req, res) => {
     try {
       const commentId = parseInt(req.params.id, 10);
-      const userId = (req.user as any).claims.sub;
+      const userId = req.session!.userId!;
       const { value } = z.object({ value: z.number().min(-1).max(1) }).parse(req.body);
       
       if (value !== 1 && value !== -1) {
@@ -197,38 +197,17 @@ export async function registerRoutes(
   app.post("/api/comments/:id/accept", isAuthenticated, async (req, res) => {
     try {
       const commentId = parseInt(req.params.id, 10);
-      const userId = (req.user as any).claims.sub;
-      
-      // Get the comment to find the post
-      const comments = await storage.getComments(commentId, userId);
-      // Find the comment (it might be nested)
-      const findComment = (comments: any[], id: number): any => {
-        for (const c of comments) {
-          if (c.id === id) return c;
-          if (c.replies) {
-            const found = findComment(c.replies, id);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      
-      // We need to get the comment's postId directly from DB
-      const { db } = await import("./db");
-      const { comments: commentsTable } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-      
-      const [comment] = await db.select().from(commentsTable).where(eq(commentsTable.id, commentId));
+      const userId = req.session!.userId!;
+      const comment = await storage.getComment(commentId);
       if (!comment) {
         return res.status(404).json({ message: "Comment not found" });
       }
-      
-      // Verify the user is the post author
+
       const post = await storage.getPost(comment.postId, userId);
       if (!post || post.authorId !== userId) {
         return res.status(403).json({ message: "Only the post author can accept answers" });
       }
-      
+
       await storage.acceptAnswer(commentId, comment.postId);
       res.json({ success: true });
     } catch (error) {
