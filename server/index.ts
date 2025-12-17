@@ -1,7 +1,7 @@
-import express, { type Request, Response, NextFunction, type RequestHandler } from "express";
+import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
-import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { createServer, type IncomingMessage, type ServerResponse, type RequestListener } from "http";
 
 const app = express();
 const httpServer = createServer(app);
@@ -107,9 +107,16 @@ async function startServer() {
 
 startServer();
 
-const expressHandler: RequestHandler = app;
+const vercelRequestListener: RequestListener = (req, res) => {
+  app(req as unknown as Request, res as unknown as Response, (err?: unknown) => {
+    if (err) {
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+    }
+  });
+};
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   await setupPromise;
-  return expressHandler(req as any, res as any, () => undefined);
+  return vercelRequestListener(req, res);
 }
