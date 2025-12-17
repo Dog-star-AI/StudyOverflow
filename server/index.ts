@@ -1,7 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
-import { createServer } from "http";
+import { createServer, type IncomingMessage, type ServerResponse } from "http";
 
 const app = express();
 const httpServer = createServer(app);
@@ -107,7 +107,7 @@ async function startServer() {
 
 startServer();
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
   await setupPromise;
   return app(req, res);
 }
