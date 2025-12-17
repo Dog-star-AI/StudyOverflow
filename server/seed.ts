@@ -115,49 +115,125 @@ async function seed() {
 
   console.log(`Seeded ${courseMap.size} courses.`);
 
-  const demoUser = await createUser({
-    email: "demo@studyoverflow.africa",
-    firstName: "Demo",
-    lastName: "Student",
-    passwordHash: hashPassword("DemoPass123"),
-  });
+  const users = await Promise.all([
+    createUser({
+      email: "demo@studyoverflow.africa",
+      firstName: "Demo",
+      lastName: "Student",
+      profileImageUrl: "https://api.dicebear.com/7.x/thumbs/svg?seed=Demo",
+      bio: "Loves algorithms, coffee, and helping peers.",
+      passwordHash: hashPassword("DemoPass123"),
+    }),
+    createUser({
+      email: "ama.khumalo@studyoverflow.africa",
+      firstName: "Ama",
+      lastName: "Khumalo",
+      profileImageUrl: "https://api.dicebear.com/7.x/thumbs/svg?seed=Ama",
+      bio: "UCT CS major focused on frontend craft.",
+      passwordHash: hashPassword("StudyRocks123"),
+    }),
+    createUser({
+      email: "lerato.m@studyoverflow.africa",
+      firstName: "Lerato",
+      lastName: "Moeketsi",
+      profileImageUrl: "https://api.dicebear.com/7.x/thumbs/svg?seed=Lerato",
+      bio: "Math + ML enthusiast, sharing notes.",
+      passwordHash: hashPassword("StudyRocks123"),
+    }),
+    createUser({
+      email: "samir.patel@studyoverflow.africa",
+      firstName: "Samir",
+      lastName: "Patel",
+      profileImageUrl: "https://api.dicebear.com/7.x/thumbs/svg?seed=Samir",
+      bio: "Backend tinkerer and exam whisperer.",
+      passwordHash: hashPassword("StudyRocks123"),
+    }),
+  ]);
+
+  const userByEmail = new Map(users.map((u) => [u.email, u]));
 
   const demoPosts = [
     {
       courseKey: "UCT-CSC1010F",
+      authorEmail: "demo@studyoverflow.africa",
       title: "Tips for mastering recursion in CSC1010F",
       content: "I'm working through the recursion module and struggling to reason about the base case vs. the recursive step. What helped you internalize recursion in this course?",
     },
     {
       courseKey: "WITS-COMS2004",
+      authorEmail: "samir.patel@studyoverflow.africa",
       title: "Data structures exam prep",
       content: "Which topics carry the most weight in COMS2004? I'm reviewing hash tables, trees, and graphs. Any recommended past papers or patterns to focus on?",
     },
     {
       courseKey: "UP-COS132",
+      authorEmail: "lerato.m@studyoverflow.africa",
       title: "Setting up a reliable dev environment for COS132",
       content: "What IDE and tooling setup works best for the COS132 projects? Looking for advice on linters, formatters, and debugging tips that play nicely with the course starter kits.",
+    },
+    {
+      courseKey: "SU-COS151",
+      authorEmail: "ama.khumalo@studyoverflow.africa",
+      title: "Debugging recursion vs. iteration",
+      content: "For COS151, when do you reach for recursion over iteration in Python? Any gotchas with the autograder?",
+    },
+    {
+      courseKey: "UJ-ITRW121",
+      authorEmail: "demo@studyoverflow.africa",
+      title: "How to make a responsive navbar for the web dev assignment",
+      content: "Stuck on the responsive breakpoint behaviour. Anyone figured out a clean flex + grid combo that passes the rubric?",
     },
   ];
 
   for (const post of demoPosts) {
     const course = courseMap.get(post.courseKey);
-    if (!course) continue;
+    const author = userByEmail.get(post.authorEmail);
+    if (!course || !author) continue;
     const createdPost = await storage.createPost({
       courseId: course.id,
-      authorId: demoUser.id,
+      authorId: author.id,
       title: post.title,
       content: post.content,
     });
+
+    // seed a couple of replies per post
     await storage.createComment({
       postId: createdPost.id,
-      authorId: demoUser.id,
+      authorId: users[0].id,
       content: "Sharing a starter tip: draw the call stack on paper and label the base case clearly. It helps a lot!",
+      parentId: null,
+    });
+
+    await storage.createComment({
+      postId: createdPost.id,
+      authorId: users[1].id,
+      content: "Also recommend toggling on tail recursion examples to see the difference in the debugger.",
       parentId: null,
     });
   }
 
-  console.log("Courses and demo posts seeded successfully!");
+  // Seed lightweight chats
+  const generalChat = await storage.createChat({
+    name: "General",
+    isGroup: true,
+    memberIds: users.map((u) => u.id),
+    avatarUrl: "https://api.dicebear.com/7.x/shapes/svg?seed=General",
+  });
+
+  await storage.addMessage(generalChat.id, users[0].id, "Welcome to StudyOverflow chat!");
+  await storage.addMessage(generalChat.id, users[1].id, "Let's help each other ace these finals.");
+  await storage.addMessage(generalChat.id, users[2].id, "Dropping notes in the resources tab soon.");
+
+  const studyBuddyChat = await storage.createChat({
+    name: "Algorithms Study Buddy",
+    isGroup: false,
+    memberIds: [users[0].id, users[2].id],
+    avatarUrl: null,
+  });
+  await storage.addMessage(studyBuddyChat.id, users[2].id, "Want to pair on the graph assignment later today?");
+  await storage.addMessage(studyBuddyChat.id, users[0].id, "Yes! Free after 6pm. Let's go over BFS first.");
+
+  console.log("Courses, demo users, posts, and chats seeded successfully!");
 }
 
 seed()

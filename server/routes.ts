@@ -2,8 +2,9 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated, getSessionUserId } from "./auth";
-import { insertPostSchema, insertCommentSchema } from "@shared/schema";
+import { insertCommentSchema, insertMessageSchema, insertChatSchema } from "@shared/schema";
 import { z } from "zod";
+import { updateUserProfile } from "./users";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -12,6 +13,29 @@ export async function registerRoutes(
   // Setup authentication
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  // Profile settings
+  app.put("/api/profile", isAuthenticated, async (req, res) => {
+    try {
+      const schema = z.object({
+        firstName: z.string().min(1).max(50).optional().nullable(),
+        lastName: z.string().min(1).max(50).optional().nullable(),
+        profileImageUrl: z.string().url().max(500).optional().nullable(),
+        bio: z.string().max(280).optional().nullable(),
+      });
+
+      const data = schema.parse(req.body);
+      const userId = req.session!.userId!;
+      const updated = await updateUserProfile(userId, data);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
 
   // Universities
   app.get("/api/universities", async (req, res) => {
@@ -137,6 +161,115 @@ export async function registerRoutes(
     }
   });
 
+  // Notifications
+  app.get("/api/notifications", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session!.userId!;
+      const notifications = await storage.getNotifications(userId);
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  app.post("/api/notifications/read", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session!.userId!;
+      const schema = z.object({ ids: z.array(z.number()).optional() });
+      const { ids } = schema.parse(req.body ?? {});
+      await storage.markNotificationsRead(userId, ids);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error marking notifications read:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to update notifications" });
+    }
+  });
+
+  // Chats
+  app.get("/api/chats", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session!.userId!;
+      const chats = await storage.getChats(userId);
+      res.json(chats);
+    } catch (error) {
+      console.error("Error fetching chats:", error);
+      res.status(500).json({ message: "Failed to fetch chats" });
+    }
+  });
+
+  app.post("/api/chats", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.session!.userId!;
+      const parsed = insertChatSchema.parse(req.body);
+      const memberIds = Array.from(new Set([userId, ...parsed.memberIds]));
+      const chat = await storage.createChat({ ...parsed, memberIds });
+      res.status(201).json(chat);
+    } catch (error) {
+      console.error("Error creating chat:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to create chat" });
+    }
+  });
+
+  app.get("/api/chats/:id/messages", isAuthenticated, async (req, res) => {
+    try {
+      const chatId = parseInt(req.params.id, 10);
+      const userId = req.session!.userId!;
+      const chat = await storage.getChat(chatId);
+      if (!chat || !chat.memberIds.includes(userId)) {
+        return res.status(404).json({ message: "Chat not found" });
+      }
+      const messages = await storage.getMessages(chatId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/chats/:id/messages", isAuthenticated, async (req, res) => {
+    try {
+      const chatId = parseInt(req.params.id, 10);
+      const userId = req.session!.userId!;
+      const chat = await storage.getChat(chatId);
+      if (!chat || !chat.memberIds.includes(userId)) {
+        return res.status(404).json({ message: "Chat not found" });
+      }
+
+      const { content } = insertMessageSchema.parse(req.body);
+      const message = await storage.addMessage(chatId, userId, content);
+
+      // Notify other members
+      await Promise.all(
+        chat.memberIds
+          .filter((memberId) => memberId !== userId)
+          .map((memberId) =>
+            storage.createNotification({
+              userId: memberId,
+              title: chat.isGroup ? chat.name : "New message",
+              body: content.slice(0, 120),
+              link: null,
+              type: "chat",
+            })
+          )
+      );
+
+      res.status(201).json(message);
+    } catch (error) {
+      console.error("Error sending message:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
   // Comments
   app.get("/api/posts/:id/comments", async (req, res) => {
     try {
@@ -166,6 +299,17 @@ export async function registerRoutes(
         authorId: userId,
         parentId: data.parentId ?? null,
       });
+
+      const post = await storage.getPost(postId, userId);
+      if (post && post.authorId !== userId) {
+        await storage.createNotification({
+          userId: post.authorId,
+          title: "New reply to your question",
+          body: data.content.slice(0, 120),
+          link: `/post/${postId}`,
+          type: "comment",
+        });
+      }
       res.status(201).json(comment);
     } catch (error) {
       console.error("Error creating comment:", error);
@@ -209,6 +353,16 @@ export async function registerRoutes(
       }
 
       await storage.acceptAnswer(commentId, comment.postId);
+
+      if (comment.authorId !== userId) {
+        await storage.createNotification({
+          userId: comment.authorId,
+          title: "Your answer was accepted",
+          body: "Congrats! Your answer was marked as the solution.",
+          link: `/post/${comment.postId}`,
+          type: "answer",
+        });
+      }
       res.json({ success: true });
     } catch (error) {
       console.error("Error accepting answer:", error);

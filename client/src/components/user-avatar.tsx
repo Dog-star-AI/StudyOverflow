@@ -20,7 +20,12 @@ export function UserAvatar({ firstName, lastName, profileImageUrl, size = "defau
 
   return (
     <Avatar className={cn(sizeClasses[size], className)}>
-      <AvatarImage src={profileImageUrl || undefined} alt={`${firstName || ""} ${lastName || ""}`} />
+      <AvatarImage
+        src={profileImageUrl || undefined}
+        alt={`${firstName || ""} ${lastName || ""}`}
+        loading="lazy"
+        className="object-cover"
+      />
       <AvatarFallback className="bg-primary text-primary-foreground">
         {initials}
       </AvatarFallback>

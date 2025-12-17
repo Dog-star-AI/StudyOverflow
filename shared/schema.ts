@@ -65,6 +65,7 @@ export interface PostWithAuthor extends Post {
     firstName: string | null;
     lastName: string | null;
     profileImageUrl: string | null;
+    bio?: string | null;
   };
   course: {
     id: number;
@@ -102,10 +103,70 @@ export interface CommentWithAuthor extends Comment {
     firstName: string | null;
     lastName: string | null;
     profileImageUrl: string | null;
+    bio?: string | null;
   };
   userVote?: number;
   replies?: CommentWithAuthor[];
 }
+
+export const insertNotificationSchema = z.object({
+  userId: z.string(),
+  title: z.string().min(1).max(120),
+  body: z.string().min(1).max(280),
+  link: z.string().url().nullable().optional(),
+  type: z.enum(["comment", "answer", "chat", "system"]).default("system"),
+});
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export interface Notification extends InsertNotification {
+  id: number;
+  isRead: boolean;
+  createdAt: Date;
+}
+
+export interface ChatThread {
+  id: number;
+  name: string;
+  isGroup: boolean;
+  memberIds: string[];
+  avatarUrl?: string | null;
+  lastMessageAt?: Date | null;
+}
+
+export interface ChatThreadWithMeta extends ChatThread {
+  lastMessage?: MessageWithSender;
+}
+
+export interface Message {
+  id: number;
+  chatId: number;
+  senderId: string;
+  content: string;
+  createdAt: Date;
+}
+
+export interface MessageWithSender extends Message {
+  sender?: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  };
+}
+
+export const insertMessageSchema = z.object({
+  content: z.string().min(1).max(1200),
+});
+
+export const insertChatSchema = z.object({
+  name: z.string().min(1).max(120),
+  isGroup: z.boolean().default(false),
+  memberIds: z.array(z.string()).min(2),
+  avatarUrl: z.string().url().nullable().optional(),
+});
+
+export type InsertChat = z.infer<typeof insertChatSchema>;
 
 export const insertPostVoteSchema = z.object({
   postId: z.number(),

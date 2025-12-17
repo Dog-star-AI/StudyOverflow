@@ -4,7 +4,8 @@ import MongoStore from "connect-mongo";
 import { randomBytes, randomInt, scryptSync, timingSafeEqual } from "crypto";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { mongoUrl } from "./mongo";
+import { mongoUrl, getCollection } from "./mongo";
+import { getEnv } from "./env";
 import { createUser, findUserByEmail, findUserById, sanitizeUser } from "./users";
 
 declare module "express-session" {
@@ -19,6 +20,7 @@ const loginSchema = z.object({
   password: z.string().min(8),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
+  profileImageUrl: z.string().url().max(500).optional(),
   verificationCode: z.string().length(6).optional(),
 });
 
@@ -33,10 +35,20 @@ const loginLimiter = rateLimit({
 
 const VERIFICATION_TTL_MS = 10 * 60 * 1000;
 const MAX_VERIFICATION_ATTEMPTS = 5;
-const verificationCodes = new Map<
-  string,
-  { code: string; expiresAt: number; attempts: number }
->();
+
+interface VerificationCode {
+  _id: string;
+  code: string;
+  expiresAt: number;
+  attempts: number;
+}
+
+async function getVerificationCodeCollection() {
+  const collection = await getCollection<VerificationCode>("verification_codes");
+  // Ensure TTL index exists for auto-cleanup
+  await collection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch(() => {});
+  return collection;
+}
 
 function generateVerificationCode() {
   return randomInt(100000, 1000000).toString();
@@ -55,14 +67,12 @@ function verifyPassword(password: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
-  if (!process.env.SESSION_SECRET) {
-    throw new Error("SESSION_SECRET must be set for session authentication.");
-  }
+  const env = getEnv();
 
   app.set("trust proxy", 1);
   app.use(
     session({
-      secret: process.env.SESSION_SECRET,
+      secret: env.SESSION_SECRET,
       resave: false,
       saveUninitialized: false,
       store: MongoStore.create({
@@ -73,7 +83,7 @@ export function setupAuth(app: Express) {
       }),
       cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: env.NODE_ENV === "production",
         sameSite: "lax",
         maxAge: SESSION_TTL,
       },
@@ -92,40 +102,54 @@ export const getSessionUserId = (req: Request) => req.session?.userId;
 
 export function registerAuthRoutes(app: Express): void {
   app.post("/api/auth/send-code", loginLimiter, async (req, res) => {
-    const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Valid email required" });
-    }
+    try {
+      const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Valid email required" });
+      }
 
-    const email = parsed.data.email.toLowerCase();
-    const existing = await findUserByEmail(email);
+      const email = parsed.data.email.toLowerCase();
+      const existing = await findUserByEmail(email);
 
-    if (existing) {
+      if (existing) {
+        return res.json({
+          message: "Account already exists. You can sign in without a verification code.",
+          alreadyExists: true,
+        });
+      }
+
+      const code = generateVerificationCode();
+      const collection = await getVerificationCodeCollection();
+      
+      await collection.updateOne(
+        { _id: email },
+        {
+          $set: {
+            _id: email,
+            code,
+            expiresAt: Date.now() + VERIFICATION_TTL_MS,
+            attempts: 0,
+          },
+        },
+        { upsert: true }
+      );
+
+      const logMessage = `Verification code requested for ${email}`;
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`${logMessage}: ${code}`);
+      } else {
+        console.log(logMessage);
+      }
+
       return res.json({
-        message: "Account already exists. You can sign in without a verification code.",
-        alreadyExists: true,
+        message: "Verification code sent. Check the server logs or your email provider.",
+        previewCode: process.env.NODE_ENV !== "production" ? code : undefined,
+        expiresInMs: VERIFICATION_TTL_MS,
       });
+    } catch (error) {
+      console.error("Error sending verification code:", error);
+      res.status(500).json({ message: "Failed to send verification code" });
     }
-
-    const code = generateVerificationCode();
-    verificationCodes.set(email, {
-      code,
-      expiresAt: Date.now() + VERIFICATION_TTL_MS,
-      attempts: 0,
-    });
-
-    const logMessage = `Verification code requested for ${email}`;
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`${logMessage}: ${code}`);
-    } else {
-      console.log(logMessage);
-    }
-
-    return res.json({
-      message: "Verification code sent. Check the server logs or your email provider.",
-      previewCode: process.env.NODE_ENV !== "production" ? code : undefined,
-      expiresInMs: VERIFICATION_TTL_MS,
-    });
   });
 
   app.post("/api/auth/login", loginLimiter, async (req, res) => {
@@ -134,7 +158,7 @@ export function registerAuthRoutes(app: Express): void {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.errors });
     }
 
-    const { email, password, firstName, lastName, verificationCode } = parsed.data;
+    const { email, password, firstName, lastName, profileImageUrl, verificationCode } = parsed.data;
     const normalizedEmail = email.toLowerCase();
     const existing = await findUserByEmail(normalizedEmail);
 
@@ -146,29 +170,36 @@ export function registerAuthRoutes(app: Express): void {
       return res.json(sanitizeUser(existing)!);
     }
 
-    const codeRecord = verificationCodes.get(normalizedEmail);
     if (!verificationCode) {
       return res.status(400).json({ message: "Verification code required to create an account." });
     }
+    
+    const collection = await getVerificationCodeCollection();
+    const codeRecord = await collection.findOne({ _id: normalizedEmail });
+    
     if (!codeRecord || codeRecord.expiresAt < Date.now()) {
-      verificationCodes.delete(normalizedEmail);
+      if (codeRecord) {
+        await collection.deleteOne({ _id: normalizedEmail });
+      }
       return res.status(400).json({ message: "Verification code expired or missing. Request a new one." });
     }
     if (codeRecord.code !== verificationCode) {
-      codeRecord.attempts += 1;
-      if (codeRecord.attempts >= MAX_VERIFICATION_ATTEMPTS) {
-        verificationCodes.delete(normalizedEmail);
+      const attempts = codeRecord.attempts + 1;
+      if (attempts >= MAX_VERIFICATION_ATTEMPTS) {
+        await collection.deleteOne({ _id: normalizedEmail });
       } else {
-        verificationCodes.set(normalizedEmail, codeRecord);
+        await collection.updateOne({ _id: normalizedEmail }, { $set: { attempts } });
       }
       return res.status(400).json({ message: "Invalid verification code. Please try again." });
     }
-    verificationCodes.delete(normalizedEmail);
+    
+    await collection.deleteOne({ _id: normalizedEmail });
 
     const newUser = await createUser({
       email: normalizedEmail,
       firstName: firstName ?? null,
       lastName: lastName ?? null,
+      profileImageUrl: profileImageUrl ?? null,
       passwordHash: hashPassword(password),
     });
     req.session.userId = newUser.id;

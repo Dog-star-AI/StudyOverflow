@@ -10,6 +10,13 @@ import type {
   PostWithAuthor,
   University,
   User,
+  InsertNotification,
+  InsertChat,
+  Notification,
+  ChatThread,
+  ChatThreadWithMeta,
+  Message,
+  MessageWithSender,
 } from "@shared/schema";
 import type { Sort, Filter } from "mongodb";
 import { getCollection, getNextId } from "./mongo";
@@ -21,6 +28,9 @@ type PostDocument = Omit<Post, "id"> & { _id: number };
 type CommentDocument = Omit<Comment, "id"> & { _id: number };
 type PostVoteDocument = { postId: number; userId: string; value: number };
 type CommentVoteDocument = { commentId: number; userId: string; value: number };
+type NotificationDocument = Omit<Notification, "id"> & { _id: number };
+type ChatDocument = Omit<ChatThread, "id"> & { _id: number };
+type MessageDocument = Omit<Message, "id"> & { _id: number };
 
 function toAuthorProfile(user: User | undefined, fallbackId: string) {
   if (!user) {
@@ -31,6 +41,7 @@ function toAuthorProfile(user: User | undefined, fallbackId: string) {
     firstName: user.firstName,
     lastName: user.lastName,
     profileImageUrl: user.profileImageUrl,
+    bio: (user as User & { bio?: string | null }).bio ?? null,
   };
 }
 
@@ -53,6 +64,16 @@ export interface IStorage {
   createComment(data: InsertComment): Promise<Comment>;
   voteOnComment(commentId: number, userId: string, value: number): Promise<void>;
   acceptAnswer(commentId: number, postId: number): Promise<void>;
+
+  createNotification(data: InsertNotification & { createdAt?: Date; isRead?: boolean }): Promise<Notification>;
+  getNotifications(userId: string): Promise<Notification[]>;
+  markNotificationsRead(userId: string, ids?: number[]): Promise<void>;
+
+  createChat(data: InsertChat): Promise<ChatThread>;
+  getChats(userId: string): Promise<ChatThreadWithMeta[]>;
+  getChat(chatId: number): Promise<ChatThread | undefined>;
+  getMessages(chatId: number): Promise<MessageWithSender[]>;
+  addMessage(chatId: number, senderId: string, content: string): Promise<Message>;
 }
 
 async function mapCourses(ids: number[]): Promise<Map<number, Course>> {
@@ -437,6 +458,175 @@ export class DatabaseStorage implements IStorage {
     await comments.updateMany({ postId }, { $set: { isAcceptedAnswer: false } });
     await comments.updateOne({ _id: commentId }, { $set: { isAcceptedAnswer: true } });
     await posts.updateOne({ _id: postId }, { $set: { isAnswered: true } });
+  }
+
+  async createNotification(data: InsertNotification & { createdAt?: Date; isRead?: boolean }): Promise<Notification> {
+    const notifications = await getCollection<NotificationDocument>("notifications");
+    const id = await getNextId("notifications");
+    const now = data.createdAt ?? new Date();
+    const doc: NotificationDocument = {
+      _id: id,
+      userId: data.userId,
+      title: data.title,
+      body: data.body,
+      link: data.link ?? null,
+      type: data.type ?? "system",
+      isRead: data.isRead ?? false,
+      createdAt: now,
+    };
+    await notifications.insertOne(doc);
+    return {
+      id,
+      userId: doc.userId,
+      title: doc.title,
+      body: doc.body,
+      link: doc.link,
+      type: doc.type,
+      isRead: doc.isRead,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  async getNotifications(userId: string): Promise<Notification[]> {
+    const notifications = await getCollection<NotificationDocument>("notifications");
+    const docs = await notifications.find({ userId }).sort({ createdAt: -1 }).limit(50).toArray();
+    return docs.map((doc) => ({
+      id: doc._id,
+      userId: doc.userId,
+      title: doc.title,
+      body: doc.body,
+      link: doc.link,
+      type: doc.type,
+      isRead: doc.isRead,
+      createdAt: new Date(doc.createdAt),
+    }));
+  }
+
+  async markNotificationsRead(userId: string, ids?: number[]): Promise<void> {
+    const notifications = await getCollection<NotificationDocument>("notifications");
+    const filter = ids && ids.length > 0 ? { userId, _id: { $in: ids } } : { userId };
+    await notifications.updateMany(filter, { $set: { isRead: true } });
+  }
+
+  async createChat(data: InsertChat): Promise<ChatThread> {
+    const chats = await getCollection<ChatDocument>("chats");
+    const id = await getNextId("chats");
+    const doc: ChatDocument = {
+      _id: id,
+      name: data.name,
+      isGroup: data.isGroup,
+      memberIds: data.memberIds,
+      avatarUrl: data.avatarUrl ?? null,
+      lastMessageAt: null,
+    };
+    await chats.insertOne(doc);
+    return {
+      id,
+      name: doc.name,
+      isGroup: doc.isGroup,
+      memberIds: doc.memberIds,
+      avatarUrl: doc.avatarUrl,
+      lastMessageAt: doc.lastMessageAt,
+    };
+  }
+
+  async getChat(chatId: number): Promise<ChatThread | undefined> {
+    const chats = await getCollection<ChatDocument>("chats");
+    const doc = await chats.findOne({ _id: chatId });
+    if (!doc) return undefined;
+    return {
+      id: doc._id,
+      name: doc.name,
+      isGroup: doc.isGroup,
+      memberIds: doc.memberIds,
+      avatarUrl: doc.avatarUrl,
+      lastMessageAt: doc.lastMessageAt ?? null,
+    };
+  }
+
+  async getChats(userId: string): Promise<ChatThreadWithMeta[]> {
+    const chats = await getCollection<ChatDocument>("chats");
+    const chatDocs = await chats.find({ memberIds: userId }).sort({ lastMessageAt: -1 }).toArray();
+    if (chatDocs.length === 0) return [];
+    const chatIds = chatDocs.map((c) => c._id);
+
+    const messagesCol = await getCollection<MessageDocument>("messages");
+    const lastMessages = await messagesCol
+      .aggregate([
+        { $match: { chatId: { $in: chatIds } } },
+        { $sort: { createdAt: -1 } },
+        { $group: { _id: "$chatId", doc: { $first: "$$ROOT" } } },
+      ])
+      .toArray();
+
+    const lastMessageMap = new Map<number, MessageDocument>();
+    lastMessages.forEach((entry: any) => {
+      lastMessageMap.set(entry._id as number, entry.doc as MessageDocument);
+    });
+
+    const senderIds = Array.from(new Set(Array.from(lastMessageMap.values()).map((m) => m.senderId)));
+    const senderProfiles = await findUsersByIds(senderIds);
+
+    return chatDocs.map((chat) => {
+      const lastMessage = lastMessageMap.get(chat._id);
+      return {
+        id: chat._id,
+        name: chat.name,
+        isGroup: chat.isGroup,
+        memberIds: chat.memberIds,
+        avatarUrl: chat.avatarUrl,
+        lastMessageAt: chat.lastMessageAt ?? null,
+        lastMessage: lastMessage
+          ? {
+              id: lastMessage._id,
+              chatId: lastMessage.chatId,
+              senderId: lastMessage.senderId,
+              content: lastMessage.content,
+              createdAt: new Date(lastMessage.createdAt),
+              sender: toAuthorProfile(senderProfiles.get(lastMessage.senderId), lastMessage.senderId),
+            }
+          : undefined,
+      };
+    });
+  }
+
+  async getMessages(chatId: number): Promise<MessageWithSender[]> {
+    const messages = await getCollection<MessageDocument>("messages");
+    const docs = await messages.find({ chatId }).sort({ createdAt: 1 }).limit(200).toArray();
+    const userIds = Array.from(new Set(docs.map((m) => m.senderId)));
+    const profiles = await findUsersByIds(userIds);
+
+    return docs.map((doc) => ({
+      id: doc._id,
+      chatId: doc.chatId,
+      senderId: doc.senderId,
+      content: doc.content,
+      createdAt: new Date(doc.createdAt),
+      sender: toAuthorProfile(profiles.get(doc.senderId), doc.senderId),
+    }));
+  }
+
+  async addMessage(chatId: number, senderId: string, content: string): Promise<Message> {
+    const messages = await getCollection<MessageDocument>("messages");
+    const chats = await getCollection<ChatDocument>("chats");
+    const id = await getNextId("messages");
+    const now = new Date();
+    const doc: MessageDocument = {
+      _id: id,
+      chatId,
+      senderId,
+      content,
+      createdAt: now,
+    };
+    await messages.insertOne(doc);
+    await chats.updateOne({ _id: chatId }, { $set: { lastMessageAt: now } });
+    return {
+      id,
+      chatId,
+      senderId,
+      content,
+      createdAt: now,
+    };
   }
 }
 

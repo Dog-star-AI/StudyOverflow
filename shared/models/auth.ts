@@ -6,6 +6,7 @@ export const userSchema = z.object({
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
   profileImageUrl: z.string().nullable(),
+  bio: z.string().max(280).nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
 });
@@ -18,6 +19,7 @@ export type UpsertUser = {
   firstName?: string | null;
   lastName?: string | null;
   profileImageUrl?: string | null;
+  bio?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 };

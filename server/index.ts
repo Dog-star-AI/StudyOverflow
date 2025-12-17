@@ -1,11 +1,15 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { validateEnv } from "./env";
 import { createServer, type IncomingMessage, type ServerResponse, type RequestListener } from "http";
+
+// Validate environment variables at startup
+const env = validateEnv();
 
 const app = express();
 const httpServer = createServer(app);
-const isVercel = !!process.env.VERCEL;
+const isVercel = !!env.VERCEL;
 
 declare module "http" {
   interface IncomingMessage {
@@ -65,10 +69,21 @@ const setupPromise = (async () => {
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
+    
+    // Don't expose internal errors in production
+    let message: string;
+    if (env.NODE_ENV === "production" && status === 500) {
+      message = "Internal Server Error";
+    } else {
+      message = err.message || "Internal Server Error";
+    }
+    
+    // Log full error for debugging
+    if (status === 500) {
+      console.error("Unhandled server error:", err);
+    }
+    
     res.status(status).json({ message });
-    throw err;
   });
 
   // only setup static assets in production when we control the filesystem
@@ -92,7 +107,7 @@ async function startServer() {
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
+  const port = env.PORT;
   httpServer.listen(
     {
       port,

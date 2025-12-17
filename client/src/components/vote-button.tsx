@@ -17,8 +17,7 @@ export function VoteButton({ direction, isActive, onClick, disabled }: VoteButto
       disabled={disabled}
       data-testid={`button-vote-${direction}`}
       className={cn(
-        "p-1 rounded-md transition-colors",
-        "hover-elevate active-elevate-2",
+        "p-2 rounded-full transition-colors border bg-muted/70 hover:bg-background shadow-sm",
         isActive && direction === "up" && "text-chart-2",
         isActive && direction === "down" && "text-destructive",
         !isActive && "text-muted-foreground",
@@ -42,7 +41,7 @@ interface VoteControlProps {
 export function VoteControl({ voteCount, userVote, onUpvote, onDownvote, disabled, size = "default" }: VoteControlProps) {
   return (
     <div className={cn(
-      "flex flex-col items-center gap-0.5",
+      "flex flex-col items-center gap-1 rounded-xl border bg-muted/50 px-2 py-2",
       size === "sm" && "scale-90"
     )}>
       <VoteButton

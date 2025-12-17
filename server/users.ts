@@ -13,6 +13,7 @@ function toUser(doc: UserDocument): User {
     firstName: rest.firstName ?? null,
     lastName: rest.lastName ?? null,
     profileImageUrl: rest.profileImageUrl ?? null,
+    bio: rest.bio ?? null,
   };
 }
 
@@ -45,6 +46,7 @@ export async function createUser(userData: UpsertUser & { passwordHash?: string 
     firstName: userData.firstName ?? null,
     lastName: userData.lastName ?? null,
     profileImageUrl: userData.profileImageUrl ?? null,
+    bio: userData.bio ?? null,
     createdAt: userData.createdAt ?? now,
     updatedAt: userData.updatedAt ?? now,
     passwordHash: userData.passwordHash,
@@ -60,6 +62,29 @@ export async function updateUserPassword(id: string, passwordHash: string): Prom
     { id },
     { $set: { passwordHash, updatedAt: new Date() } }
   );
+}
+
+export async function updateUserProfile(
+  id: string,
+  data: { firstName?: string | null; lastName?: string | null; profileImageUrl?: string | null; bio?: string | null }
+): Promise<User> {
+  const users = await getCollection<UserDocument>("users");
+  const payload: Partial<UserDocument> = {
+    updatedAt: new Date(),
+  };
+
+  if (data.firstName !== undefined) payload.firstName = data.firstName;
+  if (data.lastName !== undefined) payload.lastName = data.lastName;
+  if (data.profileImageUrl !== undefined) payload.profileImageUrl = data.profileImageUrl;
+  if (data.bio !== undefined) payload.bio = data.bio;
+
+  const result = await users.findOneAndUpdate(
+    { id },
+    { $set: payload },
+    { returnDocument: "after" }
+  );
+
+  return toUser(result as UserDocument);
 }
 
 export function sanitizeUser(doc: UserDocument | null): User | null {

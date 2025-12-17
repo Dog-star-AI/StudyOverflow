@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { GraduationCap, BookOpen, Home, Plus, Search } from "lucide-react";
+import { GraduationCap, BookOpen, Home, Plus, Search, Settings } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -73,6 +73,14 @@ export function AppSidebar({
                   <Link href="/new" data-testid="link-new-post">
                     <Plus className="h-4 w-4" />
                     <span>Ask a Question</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={location === "/settings"}>
+                  <Link href="/settings" data-testid="link-settings">
+                    <Settings className="h-4 w-4" />
+                    <span>Settings</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

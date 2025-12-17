@@ -5,8 +5,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
+import AvatarPicker from "@/components/avatar-picker";
 
 export function LandingPage() {
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -16,6 +18,7 @@ export function LandingPage() {
   const [codeStatus, setCodeStatus] = useState<string | null>(null);
   const [sendingCode, setSendingCode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [profileImageUrl, setProfileImageUrl] = useState<string>("");
 
   async function handleSendCode() {
     setCodeStatus(null);
@@ -57,6 +60,28 @@ export function LandingPage() {
     setError(null);
 
     try {
+      // For sign-in mode, no verification code needed
+      if (!isSignUp && !verificationCode) {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            email: email.trim(),
+            password,
+          }),
+        });
+
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(body?.message || "Invalid email or password");
+        }
+
+        window.location.href = "/";
+        return;
+      }
+
+      // For sign-up mode, verification code is required
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,18 +91,19 @@ export function LandingPage() {
           password,
           firstName: firstName.trim() || undefined,
           lastName: lastName.trim() || undefined,
-          verificationCode: verificationCode.trim() || undefined,
+          verificationCode: verificationCode.trim(),
+          profileImageUrl: profileImageUrl.trim() || undefined,
         }),
       });
 
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message || "Unable to sign in");
+        throw new Error(body?.message || "Unable to create account");
       }
 
       window.location.href = "/";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to sign in");
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setSubmitting(false);
     }
@@ -123,32 +149,83 @@ export function LandingPage() {
             <Card>
               <CardContent className="pt-6 space-y-4">
                 <div className="space-y-1 text-left">
-                  <h2 className="text-xl font-semibold">Sign in or create an account</h2>
+                  <h2 className="text-xl font-semibold">
+                    {isSignUp ? "Create an account" : "Sign in"}
+                  </h2>
                   <p className="text-sm text-muted-foreground">
-                    Use your email and a password to join securely. Your details are stored on the server and kept private to your account.
+                    {isSignUp
+                      ? "Join StudyOverflow to ask questions and help other students."
+                      : "Sign in to your account to continue."}
                   </p>
                 </div>
+
+                <div className="flex gap-2 border-b">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(false);
+                      setError(null);
+                      setCodeStatus(null);
+                    }}
+                    className={`pb-3 font-medium text-sm transition-colors ${
+                      !isSignUp
+                        ? "border-b-2 border-primary text-primary -mb-1"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(true);
+                      setError(null);
+                      setCodeStatus(null);
+                    }}
+                    className={`pb-3 font-medium text-sm transition-colors ${
+                      isSignUp
+                        ? "border-b-2 border-primary text-primary -mb-1"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Sign Up
+                  </button>
+                </div>
+
                 <form className="space-y-4 text-left" onSubmit={handleSubmit}>
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="firstName">First name (optional)</Label>
-                      <Input
-                        id="firstName"
-                        autoComplete="given-name"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="lastName">Last name (optional)</Label>
-                      <Input
-                        id="lastName"
-                        autoComplete="family-name"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                      />
-                    </div>
-                  </div>
+                  {isSignUp && (
+                    <>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="firstName">First name (optional)</Label>
+                          <Input
+                            id="firstName"
+                            autoComplete="given-name"
+                            value={firstName}
+                            onChange={(e) => setFirstName(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="lastName">Last name (optional)</Label>
+                          <Input
+                            id="lastName"
+                            autoComplete="family-name"
+                            value={lastName}
+                            onChange={(e) => setLastName(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Choose an avatar (optional)</Label>
+                        <AvatarPicker
+                          value={profileImageUrl || undefined}
+                          initialSeed={`${firstName} ${lastName}`.trim()}
+                          onChange={(url) => setProfileImageUrl(url)}
+                        />
+                      </div>
+                    </>
+                  )}
+
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
@@ -165,43 +242,47 @@ export function LandingPage() {
                     <Input
                       id="password"
                       type="password"
-                      autoComplete="current-password"
+                      autoComplete={isSignUp ? "new-password" : "current-password"}
                       required
                       minLength={8}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <Label htmlFor="verificationCode">Verification code</Label>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleSendCode}
-                        disabled={sendingCode || !email}
-                        data-testid="button-send-code"
-                      >
-                        {sendingCode ? "Sending..." : "Send code"}
-                      </Button>
+
+                  {isSignUp && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <Label htmlFor="verificationCode">Verification code</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSendCode}
+                          disabled={sendingCode || !email}
+                          data-testid="button-send-code"
+                        >
+                          {sendingCode ? "Sending..." : "Send code"}
+                        </Button>
+                      </div>
+                      <Input
+                        id="verificationCode"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        placeholder="6-digit code"
+                        value={verificationCode}
+                        onChange={(e) => setVerificationCode(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        We'll send a 6-digit code to verify your email address.
+                      </p>
+                      {codeStatus && <p className="text-sm text-primary">{codeStatus}</p>}
                     </div>
-                    <Input
-                      id="verificationCode"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6-digit code"
-                      value={verificationCode}
-                      onChange={(e) => setVerificationCode(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      New accounts require a verification code. Existing members can sign in as usual.
-                    </p>
-                    {codeStatus && <p className="text-sm text-primary">{codeStatus}</p>}
-                  </div>
+                  )}
+
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={submitting} data-testid="button-join-now">
-                    {submitting ? "Signing in..." : "Join Now - It's Free"}
+                    {submitting ? (isSignUp ? "Creating account..." : "Signing in...") : isSignUp ? "Create Account" : "Sign In"}
                     <ArrowRight className="h-5 w-5 ml-2" />
                   </Button>
                 </form>
