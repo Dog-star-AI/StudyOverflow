@@ -78,6 +78,7 @@ export function setupAuth(app: Express) {
       cookie: {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
         maxAge: SESSION_TTL,
       },
     })
