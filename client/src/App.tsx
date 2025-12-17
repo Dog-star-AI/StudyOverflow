@@ -43,7 +43,7 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full">
+      <div className="flex min-h-screen w-full bg-background">
         <AppSidebar
           universities={universities}
           courses={courses}

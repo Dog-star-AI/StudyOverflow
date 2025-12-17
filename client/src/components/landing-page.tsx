@@ -4,14 +4,52 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export function LandingPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [codeStatus, setCodeStatus] = useState<string | null>(null);
+  const [sendingCode, setSendingCode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  async function handleSendCode() {
+    setCodeStatus(null);
+    setError(null);
+    if (!email) {
+      setCodeStatus("Enter your email first so we can send the code.");
+      return;
+    }
+
+    try {
+      setSendingCode(true);
+      const res = await fetch("/api/auth/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.message || "Unable to send verification code");
+      }
+
+      setCodeStatus(
+        body.previewCode
+          ? `Code sent. Use ${body.previewCode} within 10 minutes (dev preview).`
+          : body.message || "Verification code sent."
+      );
+    } catch (err) {
+      setCodeStatus(err instanceof Error ? err.message : "Unable to send verification code");
+    } finally {
+      setSendingCode(false);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -28,12 +66,13 @@ export function LandingPage() {
           password,
           firstName: firstName.trim() || undefined,
           lastName: lastName.trim() || undefined,
+          verificationCode: verificationCode.trim() || undefined,
         }),
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || "Unable to sign in");
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message || "Unable to sign in");
       }
 
       window.location.href = "/";
@@ -54,9 +93,12 @@ export function LandingPage() {
             </div>
             <span className="font-bold text-lg">StudyOverflow</span>
           </div>
-          <Button asChild data-testid="button-login-header">
-            <a href="#login">Sign In</a>
-          </Button>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Button variant="outline" asChild data-testid="button-login-header">
+              <a href="#login">Sign In</a>
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -129,6 +171,33 @@ export function LandingPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <Label htmlFor="verificationCode">Verification code</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSendCode}
+                        disabled={sendingCode || !email}
+                        data-testid="button-send-code"
+                      >
+                        {sendingCode ? "Sending..." : "Send code"}
+                      </Button>
+                    </div>
+                    <Input
+                      id="verificationCode"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="6-digit code"
+                      value={verificationCode}
+                      onChange={(e) => setVerificationCode(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      New accounts require a verification code. Existing members can sign in as usual.
+                    </p>
+                    {codeStatus && <p className="text-sm text-primary">{codeStatus}</p>}
                   </div>
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={submitting} data-testid="button-join-now">
