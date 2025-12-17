@@ -27,12 +27,36 @@ StudyOverflow is a community-driven Q&A app for universities and courses. It pai
 ## Local Development
 
 1. Install dependencies: `npm install`
-2. (Optional) Seed sample data: `npx tsx server/seed.ts`
+2. (Optional) Seed sample data (includes all South African universities and a demo user): `npx tsx server/seed.ts`
 3. Start the dev server (Express + Vite middleware): `npm run dev`
 
 Type checking: `npm run check`  
 Production build: `npm run build` (outputs to `dist/`)  
 Run built server: `npm start`
+
+### Quick preview in Codespaces
+
+1. Start MongoDB inside the Codespace: `docker run -d --name mongo -p 27017:27017 mongo:7`
+2. Create a `.env` file with:
+   ```
+   MONGODB_URI=mongodb://127.0.0.1:27017/studyoverflow
+   SESSION_SECRET=dev-secret-change-me
+   PORT=5000
+   ```
+3. Install & seed: `npm install && npx tsx server/seed.ts`
+4. Run `npm run dev` and open the forwarded port `5000` to see the app.
+
+### Verification codes
+
+- New accounts require a 6-digit verification code. Use the "Send code" button on the landing page or `POST /api/auth/send-code` with `{ email }`.
+- In development the code is echoed in the API response and server logs. In production only the log entry is emitted.
+- Submit the code along with your password when creating the account. Existing users can sign in without a code.
+
+### Demo data
+
+- Running the seed script adds all South African universities plus starter courses, posts, and a demo account:
+  - Email: `demo@studyoverflow.africa`
+  - Password: `DemoPass123`
 
 ## Vercel Deployment
 

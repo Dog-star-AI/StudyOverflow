@@ -19,6 +19,7 @@ const loginSchema = z.object({
   password: z.string().min(8),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
+  verificationCode: z.string().length(6).optional(),
 });
 
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
@@ -29,6 +30,17 @@ const loginLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
 });
+
+const VERIFICATION_TTL_MS = 10 * 60 * 1000;
+const MAX_VERIFICATION_ATTEMPTS = 5;
+const verificationCodes = new Map<
+  string,
+  { code: string; expiresAt: number; attempts: number }
+>();
+
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 function hashPassword(password: string, salt?: string) {
   const safeSalt = salt ?? randomBytes(16).toString("hex");
@@ -79,14 +91,47 @@ export const isAuthenticated: RequestHandler = (req, res, next) => {
 export const getSessionUserId = (req: Request) => req.session?.userId;
 
 export function registerAuthRoutes(app: Express): void {
+  app.post("/api/auth/send-code", loginLimiter, async (req, res) => {
+    const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Valid email required" });
+    }
+
+    const email = parsed.data.email.toLowerCase();
+    const existing = await findUserByEmail(email);
+
+    if (existing) {
+      return res.json({
+        message: "Account already exists. You can sign in without a verification code.",
+        alreadyExists: true,
+      });
+    }
+
+    const code = generateVerificationCode();
+    verificationCodes.set(email, {
+      code,
+      expiresAt: Date.now() + VERIFICATION_TTL_MS,
+      attempts: 0,
+    });
+
+    console.log(`Verification code for ${email}: ${code}`);
+
+    return res.json({
+      message: "Verification code sent. Check the server logs or your email provider.",
+      previewCode: process.env.NODE_ENV !== "production" ? code : undefined,
+      expiresInMs: VERIFICATION_TTL_MS,
+    });
+  });
+
   app.post("/api/auth/login", loginLimiter, async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.errors });
     }
 
-    const { email, password, firstName, lastName } = parsed.data;
-    const existing = await findUserByEmail(email);
+    const { email, password, firstName, lastName, verificationCode } = parsed.data;
+    const normalizedEmail = email.toLowerCase();
+    const existing = await findUserByEmail(normalizedEmail);
 
     if (existing) {
       if (!existing.passwordHash || !verifyPassword(password, existing.passwordHash)) {
@@ -96,8 +141,27 @@ export function registerAuthRoutes(app: Express): void {
       return res.json(sanitizeUser(existing)!);
     }
 
+    const codeRecord = verificationCodes.get(normalizedEmail);
+    if (!verificationCode) {
+      return res.status(400).json({ message: "Verification code required to create an account." });
+    }
+    if (!codeRecord || codeRecord.expiresAt < Date.now()) {
+      verificationCodes.delete(normalizedEmail);
+      return res.status(400).json({ message: "Verification code expired or missing. Request a new one." });
+    }
+    if (codeRecord.code !== verificationCode) {
+      codeRecord.attempts += 1;
+      if (codeRecord.attempts >= MAX_VERIFICATION_ATTEMPTS) {
+        verificationCodes.delete(normalizedEmail);
+      } else {
+        verificationCodes.set(normalizedEmail, codeRecord);
+      }
+      return res.status(400).json({ message: "Invalid verification code. Please try again." });
+    }
+    verificationCodes.delete(normalizedEmail);
+
     const newUser = await createUser({
-      email,
+      email: normalizedEmail,
       firstName: firstName ?? null,
       lastName: lastName ?? null,
       passwordHash: hashPassword(password),
