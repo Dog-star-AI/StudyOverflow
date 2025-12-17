@@ -20,8 +20,13 @@ export const universitiesRelations = relations(universities, ({ many }) => ({
   courses: many(courses),
 }));
 
-export const insertUniversitySchema = createInsertSchema(universities);
-export type InsertUniversity = z.infer<typeof insertUniversitySchema>;
+export type InsertUniversity = Omit<typeof universities.$inferInsert, "id" | "memberCount">;
+export const insertUniversitySchema: z.ZodType<InsertUniversity> = z.object({
+  name: z.string(),
+  shortName: z.string(),
+  description: z.string().nullish(),
+  logoUrl: z.string().nullish(),
+});
 export type University = typeof universities.$inferSelect;
 
 // Courses table
@@ -42,8 +47,13 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
   posts: many(posts),
 }));
 
-export const insertCourseSchema = createInsertSchema(courses);
-export type InsertCourse = z.infer<typeof insertCourseSchema>;
+export type InsertCourse = Omit<typeof courses.$inferInsert, "id" | "memberCount">;
+export const insertCourseSchema: z.ZodType<InsertCourse> = z.object({
+  universityId: z.number(),
+  code: z.string(),
+  name: z.string(),
+  description: z.string().nullish(),
+});
 export type Course = typeof courses.$inferSelect;
 
 // Posts table
@@ -68,8 +78,16 @@ export const postsRelations = relations(posts, ({ one, many }) => ({
   votes: many(postVotes),
 }));
 
-export const insertPostSchema = createInsertSchema(posts);
-export type InsertPost = z.infer<typeof insertPostSchema>;
+export type InsertPost = Omit<
+  typeof posts.$inferInsert,
+  "id" | "voteCount" | "commentCount" | "isAnswered" | "createdAt"
+>;
+export const insertPostSchema: z.ZodType<InsertPost> = z.object({
+  courseId: z.number(),
+  authorId: z.string(),
+  title: z.string(),
+  content: z.string(),
+});
 export type Post = typeof posts.$inferSelect;
 
 // Comments table
@@ -98,8 +116,16 @@ export const commentsRelations = relations(comments, ({ one, many }) => ({
   votes: many(commentVotes),
 }));
 
-export const insertCommentSchema = createInsertSchema(comments);
-export type InsertComment = z.infer<typeof insertCommentSchema>;
+export type InsertComment = Omit<
+  typeof comments.$inferInsert,
+  "id" | "voteCount" | "isAcceptedAnswer" | "createdAt"
+>;
+export const insertCommentSchema: z.ZodType<InsertComment> = z.object({
+  postId: z.number(),
+  parentId: z.number().optional(),
+  authorId: z.string(),
+  content: z.string(),
+});
 export type Comment = typeof comments.$inferSelect;
 
 // Post votes table
