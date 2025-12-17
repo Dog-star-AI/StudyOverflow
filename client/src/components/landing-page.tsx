@@ -83,7 +83,7 @@ export function LandingPage() {
                 <div className="space-y-1 text-left">
                   <h2 className="text-xl font-semibold">Sign in or create an account</h2>
                   <p className="text-sm text-muted-foreground">
-                    Use your email and a password to join securely. Your details stay on this device unless you sign out.
+                    Use your email and a password to join securely. Your details are stored on the server and kept private to your account.
                   </p>
                 </div>
                 <form className="space-y-4 text-left" onSubmit={handleSubmit}>

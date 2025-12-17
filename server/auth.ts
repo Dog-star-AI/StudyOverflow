@@ -22,6 +22,7 @@ const loginSchema = z.object({
 
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
+// Basic in-memory throttle; replace with a shared store (e.g., Redis) in production multi-instance deployments.
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function consumeLoginAttempt(key: string): boolean {

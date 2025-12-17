@@ -11,7 +11,7 @@ import type {
   University,
   User,
 } from "@shared/schema";
-import type { Sort } from "mongodb";
+import type { Sort, Filter } from "mongodb";
 import { getCollection, getNextId } from "./mongo";
 import { findUsersByIds } from "./users";
 
@@ -180,21 +180,24 @@ export class DatabaseStorage implements IStorage {
   async getPosts(options: { courseId?: number; universityId?: number; sort?: string; userId?: string }): Promise<PostWithAuthor[]> {
     const { courseId, universityId, sort = "hot", userId } = options;
     const postsCol = await getCollection<PostDocument>("posts");
-    const filter: Record<string, any> = {};
+    const filter: Filter<PostDocument> = {};
 
-    if (courseId) {
+    if (courseId !== undefined) {
       filter.courseId = courseId;
     }
 
-    if (universityId) {
+    if (universityId !== undefined) {
       const courses = await getCollection<CourseDocument>("courses");
       const courseIds = await courses
         .find({ universityId }, { projection: { _id: 1 } })
         .map((c) => c._id)
         .toArray();
-      filter.courseId = filter.courseId
-        ? filter.courseId
-        : { $in: courseIds };
+      if (courseIds.length === 0) {
+        return [];
+      }
+      if (filter.courseId === undefined) {
+        filter.courseId = { $in: courseIds };
+      }
     }
 
     const order: Sort = sort === "new" ? { createdAt: -1 } : { voteCount: -1 };
@@ -347,7 +350,7 @@ export class DatabaseStorage implements IStorage {
     });
 
     commentMap.forEach((comment) => {
-      if (comment.parentId !== null && comment.parentId !== undefined) {
+      if (comment.parentId != null) {
         const parent = commentMap.get(comment.parentId);
         if (parent) {
           parent.replies = parent.replies || [];

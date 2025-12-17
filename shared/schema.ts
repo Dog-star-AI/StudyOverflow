@@ -71,6 +71,7 @@ export interface PostWithAuthor extends Post {
     code: string;
     name: string;
     universityId: number;
+    memberCount: number;
   };
   userVote?: number;
 }
