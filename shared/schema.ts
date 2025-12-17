@@ -1,6 +1,5 @@
 import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, integer, timestamp, boolean, primaryKey } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Re-export auth models
@@ -144,8 +143,12 @@ export const postVotesRelations = relations(postVotes, ({ one }) => ({
   }),
 }));
 
-export const insertPostVoteSchema = createInsertSchema(postVotes);
-export type InsertPostVote = z.infer<typeof insertPostVoteSchema>;
+export type InsertPostVote = typeof postVotes.$inferInsert;
+export const insertPostVoteSchema: z.ZodType<InsertPostVote> = z.object({
+  postId: z.number(),
+  userId: z.string(),
+  value: z.union([z.literal(1), z.literal(-1)]),
+});
 export type PostVote = typeof postVotes.$inferSelect;
 
 // Comment votes table
@@ -164,8 +167,12 @@ export const commentVotesRelations = relations(commentVotes, ({ one }) => ({
   }),
 }));
 
-export const insertCommentVoteSchema = createInsertSchema(commentVotes);
-export type InsertCommentVote = z.infer<typeof insertCommentVoteSchema>;
+export type InsertCommentVote = typeof commentVotes.$inferInsert;
+export const insertCommentVoteSchema: z.ZodType<InsertCommentVote> = z.object({
+  commentId: z.number(),
+  userId: z.string(),
+  value: z.union([z.literal(1), z.literal(-1)]),
+});
 export type CommentVote = typeof commentVotes.$inferSelect;
 
 // Extended types for frontend with user info

@@ -109,5 +109,14 @@ startServer();
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   await setupPromise;
-  return app(req, res);
+  return (app as any).handle(
+    req as any,
+    res as any,
+    (err?: unknown) => {
+      if (err) {
+        res.statusCode = 500;
+        res.end("Internal Server Error");
+      }
+    },
+  );
 }
