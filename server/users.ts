@@ -3,7 +3,6 @@ import type { User, UpsertUser } from "@shared/models/auth";
 import { getCollection } from "./mongo";
 
 type UserDocument = User & {
-  email: string;
   passwordHash?: string;
 };
 

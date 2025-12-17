@@ -20,6 +20,31 @@ const loginSchema = z.object({
   lastName: z.string().optional(),
 });
 
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function consumeLoginAttempt(key: string): boolean {
+  const now = Date.now();
+  const record = loginAttempts.get(key);
+
+  if (record && record.resetAt <= now) {
+    loginAttempts.delete(key);
+  }
+
+  const current = loginAttempts.get(key);
+  if (current && current.count >= LOGIN_MAX_ATTEMPTS) {
+    return false;
+  }
+
+  loginAttempts.set(key, {
+    count: (current?.count ?? 0) + 1,
+    resetAt: current?.resetAt ?? now + LOGIN_WINDOW_MS,
+  });
+
+  return true;
+}
+
 function hashPassword(password: string, salt?: string) {
   const safeSalt = salt ?? randomBytes(16).toString("hex");
   const hash = scryptSync(password, safeSalt, 64).toString("hex");
@@ -69,6 +94,11 @@ export const getSessionUserId = (req: Request) => req.session?.userId;
 
 export function registerAuthRoutes(app: Express): void {
   app.post("/api/auth/login", async (req, res) => {
+    const clientKey = req.ip || "unknown";
+    if (!consumeLoginAttempt(clientKey)) {
+      return res.status(429).json({ message: "Too many login attempts. Please try again soon." });
+    }
+
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ message: "Invalid input", errors: parsed.error.errors });
@@ -98,7 +128,11 @@ export function registerAuthRoutes(app: Express): void {
   app.get("/api/auth/user", isAuthenticated, async (req, res) => {
     const user = await findUserById(req.session.userId!);
     if (!user) {
-      req.session.destroy(() => {});
+      req.session.destroy((err) => {
+        if (err) {
+          console.error("Error destroying session after missing user:", err);
+        }
+      });
       return res.status(401).json({ message: "Unauthorized" });
     }
     res.json(sanitizeUser(user)!);
@@ -109,7 +143,10 @@ export function registerAuthRoutes(app: Express): void {
   });
 
   app.get("/api/logout", (req, res) => {
-    req.session.destroy(() => {
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("Error destroying session on logout:", err);
+      }
       res.redirect("/");
     });
   });

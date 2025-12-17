@@ -24,10 +24,10 @@ export function LandingPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          email,
+          email: email.trim(),
           password,
-          firstName: firstName || undefined,
-          lastName: lastName || undefined,
+          firstName: firstName.trim() || undefined,
+          lastName: lastName.trim() || undefined,
         }),
       });
 

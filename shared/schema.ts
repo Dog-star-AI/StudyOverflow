@@ -77,7 +77,7 @@ export interface PostWithAuthor extends Post {
 
 export const insertCommentSchema = z.object({
   postId: z.number(),
-  parentId: z.number().nullable().optional(),
+  parentId: z.number().nullish(),
   authorId: z.string(),
   content: z.string(),
 });
